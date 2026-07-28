@@ -34,8 +34,10 @@
         "tag": "dns-local"
       },
       {
-        "type": "fake-ip",
-        "tag": "dns-fake"
+        "type": "fakeip",
+        "tag": "dns-fake",
+        "inet4_range": "198.18.0.0/15",
+        "inet6_range": "fc00::/18"
       }
     ],
     "rules": [
@@ -60,12 +62,7 @@
     ],
     "final": "dns-remote",
     "strategy": "prefer_ipv4",
-    "reverse_mapping": true,
-    "fakeip": {
-      "enabled": true,
-      "inet4_range": "198.18.0.0/15",
-      "inet6_range": "fc00::/18"
-    }
+    "reverse_mapping": true
   },
   "inbounds": [
     {
