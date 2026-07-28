@@ -1,13 +1,13 @@
 {
   "log": {
     "disabled": false,
-    "level": "error"
+    "level": "warn"
   },
   "dns": {
     "servers": [
       {
         "type": "https",
-        "tag": "dns-proxy",
+        "tag": "dns-remote",
         "server": "1.1.1.1",
         "server_port": 443,
         "path": "/dns-query",
@@ -18,8 +18,24 @@
         "detour": "snell-out"
       },
       {
+        "type": "https",
+        "tag": "dns-cn",
+        "server": "223.5.5.5",
+        "server_port": 443,
+        "path": "/dns-query",
+        "tls": {
+          "enabled": true,
+          "server_name": "dns.alidns.com"
+        },
+        "detour": "direct"
+      },
+      {
         "type": "local",
         "tag": "dns-local"
+      },
+      {
+        "type": "fake-ip",
+        "tag": "dns-fake"
       }
     ],
     "rules": [
@@ -32,11 +48,24 @@
       },
       {
         "rule_set": "geosite-cn",
-        "server": "dns-local"
+        "server": "dns-cn"
+      },
+      {
+        "query_type": [
+          "A",
+          "AAAA"
+        ],
+        "server": "dns-fake"
       }
     ],
-    "final": "dns-proxy",
-    "strategy": "prefer_ipv4"
+    "final": "dns-remote",
+    "strategy": "prefer_ipv4",
+    "reverse_mapping": true,
+    "fakeip": {
+      "enabled": true,
+      "inet4_range": "198.18.0.0/15",
+      "inet6_range": "fc00::/18"
+    }
   },
   "inbounds": [
     {
@@ -47,10 +76,13 @@
         "172.19.0.1/30",
         "fdfe:dcba:9876::1/126"
       ],
-      "mtu": 9000,
+      "mtu": 1500,
       "auto_route": true,
       "strict_route": true,
-      "stack": "mixed"
+      "stack": "mixed",
+      "sniff": true,
+      "sniff_override": true,
+      "endpoint_independent_nat": true
     },
     {
       "type": "mixed",
@@ -68,8 +100,7 @@
       "server_port": 8443,
       "version": 6,
       "psk": "YOUR_PSK",
-      "mode": "default",
-      "tcp_fast_open": true
+      "mode": "default"
     },
     {
       "type": "direct",
@@ -87,14 +118,16 @@
         "type": "remote",
         "format": "source",
         "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
-        "download_detour": "direct"
+        "download_detour": "direct",
+        "update_interval": "24h"
       },
       {
         "tag": "geosite-cn",
         "type": "remote",
         "format": "source",
         "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
-        "download_detour": "direct"
+        "download_detour": "direct",
+        "update_interval": "24h"
       }
     ],
     "rules": [
@@ -110,27 +143,22 @@
         "outbound": "direct"
       },
       {
-        "domain_suffix": [
-          ".lan",
-          ".local"
-        ],
-        "outbound": "direct"
-      },
-      {
         "rule_set": "geosite-cn",
         "outbound": "direct"
       },
       {
         "rule_set": "geoip-cn",
         "outbound": "direct"
-      },
-      {
-        "network": "udp",
-        "outbound": "block"
       }
     ],
     "final": "snell-out",
     "auto_detect_interface": true,
     "default_domain_resolver": "dns-local"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "cache_id": "default"
+    }
   }
 }
