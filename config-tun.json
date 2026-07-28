@@ -26,8 +26,7 @@
         "tls": {
           "enabled": true,
           "server_name": "dns.alidns.com"
-        },
-        "detour": "direct"
+        }
       },
       {
         "type": "local",
@@ -37,7 +36,7 @@
         "type": "fakeip",
         "tag": "dns-fake",
         "inet4_range": "198.18.0.0/15",
-        "inet6_address": "fc00::/18"
+        "inet6_range": "fc00::/18"
       }
     ],
     "rules": [
@@ -113,7 +112,9 @@
         "type": "remote",
         "format": "source",
         "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
-        "download_detour": "direct",
+        "http_client": {
+          "domain_strategy": "prefer_ipv4"
+        },
         "update_interval": "24h"
       },
       {
@@ -121,7 +122,9 @@
         "type": "remote",
         "format": "source",
         "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
-        "download_detour": "direct",
+        "http_client": {
+          "domain_strategy": "prefer_ipv4"
+        },
         "update_interval": "24h"
       }
     ],
