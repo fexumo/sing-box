@@ -37,7 +37,7 @@
         "type": "fakeip",
         "tag": "dns-fake",
         "inet4_range": "198.18.0.0/15",
-        "inet6_range": "fc00::/18"
+        "inet6_address": "fc00::/18"
       }
     ],
     "rules": [
@@ -77,8 +77,6 @@
       "auto_route": true,
       "strict_route": true,
       "stack": "mixed",
-      "sniff": true,
-      "sniff_override": true,
       "endpoint_independent_nat": true
     },
     {
