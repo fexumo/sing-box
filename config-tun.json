@@ -6,13 +6,15 @@
   "dns": {
     "servers": [
       {
+        "type": "udp",
         "tag": "local",
-        "address": "223.5.5.5",
+        "server": "223.5.5.5",
         "detour": "direct"
       },
       {
+        "type": "https",
         "tag": "remote",
-        "address": "https://1.1.1.1/dns-query",
+        "server": "1.1.1.1",
         "detour": "SS-2022"
       }
     ],
@@ -23,8 +25,7 @@
       }
     ],
     "final": "remote",
-    "strategy": "ipv4_only",
-    "independent_cache": true
+    "strategy": "ipv4_only"
   },
   "inbounds": [
     {
@@ -51,7 +52,7 @@
       "server": "dbd93d58-hkt3.uzuma.ru",
       "server_port": 21016,
       "method": "2022-blake3-aes-128-gcm",
-      "password": "81D7fg1048lIoXdXhM3eOBQ=="
+      "password": "18D7fg1048lIoXdXhM3eOBQ=="
     },
     {
       "type": "direct",
@@ -86,6 +87,9 @@
       }
     ],
     "auto_detect_interface": true,
+    "default_domain_resolver": {
+      "server": "remote"
+    },
     "final": "SS-2022"
   }
 }
