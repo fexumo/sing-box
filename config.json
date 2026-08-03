@@ -1,123 +1,120 @@
 {
   "log": {
-    "disabled": false,
-    "level": "error"
+    "level": "error",
+    "timestamp": true
   },
   "dns": {
     "servers": [
       {
-        "type": "https",
-        "tag": "dns-proxy",
-        "server": "1.1.1.1",
-        "server_port": 443,
-        "path": "/dns-query",
-        "tls": {
-          "enabled": true,
-          "server_name": "cloudflare-dns.com"
-        },
-        "detour": "snell-out"
+        "type": "quic",
+        "tag": "dns_direct",
+        "server": "223.5.5.5"
       },
       {
-        "type": "local",
-        "tag": "dns-local"
+        "type": "https",
+        "tag": "dns_proxy",
+        "detour": "shadowsocks-out",
+        "server": "8.8.8.8"
       }
     ],
     "rules": [
       {
-        "domain_suffix": [
-          ".lan",
-          ".local"
+        "query_type": [
+          "AAAA"
         ],
-        "server": "dns-local"
+        "action": "reject"
       },
       {
-        "rule_set": "geosite-cn",
-        "server": "dns-local"
+        "rule_set": "cn_domain",
+        "server": "dns_direct"
       }
     ],
-    "final": "dns-proxy",
-    "strategy": "prefer_ipv4"
+    "final": "dns_proxy"
   },
   "inbounds": [
     {
+      "type": "tun",
+      "address": [
+        "172.18.0.1/30"
+      ],
+      "auto_route": true,
+      "stack": "mixed"
+    },
+    {
       "type": "mixed",
-      "tag": "mixed-in",
       "listen": "127.0.0.1",
-      "listen_port": 7890,
-      "tcp_fast_open": true
+      "listen_port": 7890
     }
   ],
   "outbounds": [
     {
-      "type": "snell",
-      "tag": "snell-out",
-      "server": "YOUR_SERVER",
-      "server_port": 8443,
-      "version": 6,
-      "psk": "YOUR_PSK",
-      "mode": "default",
-      "tcp_fast_open": true
+      "type": "shadowsocks",
+      "tag": "shadowsocks-out",
+      "server": "219.78.209.216",
+      "server_port": 21016,
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "0D7fg1018lIoXdXhM3eOBQ=="
     },
     {
       "type": "direct",
       "tag": "direct"
-    },
-    {
-      "type": "block",
-      "tag": "block"
     }
   ],
   "route": {
-    "rule_set": [
-      {
-        "tag": "geoip-cn",
-        "type": "remote",
-        "format": "source",
-        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
-        "download_detour": "direct"
-      },
-      {
-        "tag": "geosite-cn",
-        "type": "remote",
-        "format": "source",
-        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
-        "download_detour": "direct"
-      }
-    ],
     "rules": [
-      {
-        "action": "sniff"
-      },
-      {
-        "protocol": "dns",
-        "action": "hijack-dns"
-      },
       {
         "ip_is_private": true,
         "outbound": "direct"
       },
       {
-        "domain_suffix": [
-          ".lan",
-          ".local"
+        "rule_set": "cn_ip",
+        "outbound": "direct"
+      },
+      {
+        "action": "sniff"
+      },
+      {
+        "type": "logical",
+        "mode": "and",
+        "rules": [
+          {
+            "protocol": "stun"
+          },
+          {
+            "rule_set": "cn_ip",
+            "invert": true
+          }
         ],
-        "outbound": "direct"
+        "action": "reject"
       },
       {
-        "rule_set": "geosite-cn",
+        "rule_set": "cn_domain",
         "outbound": "direct"
-      },
-      {
-        "rule_set": "geoip-cn",
-        "outbound": "direct"
-      },
-      {
-        "network": "udp",
-        "outbound": "block"
       }
     ],
-    "final": "snell-out",
+    "rule_set": [
+      {
+        "type": "remote",
+        "tag": "cn_ip",
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs",
+        "download_detour": "shadowsocks-out",
+        "update_interval": "24h"
+      },
+      {
+        "type": "remote",
+        "tag": "cn_domain",
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo-lite/geosite/cn.srs",
+        "download_detour": "shadowsocks-out",
+        "update_interval": "24h"
+      }
+    ],
+    "final": "shadowsocks-out",
     "auto_detect_interface": true,
-    "default_domain_resolver": "dns-local"
+    "default_domain_resolver": "dns_direct"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true
+    }
   }
 }
