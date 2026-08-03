@@ -1,162 +1,91 @@
 {
   "log": {
-    "disabled": false,
-    "level": "warn"
+    "level": "info",
+    "timestamp": true
   },
   "dns": {
     "servers": [
       {
-        "type": "https",
-        "tag": "dns-remote",
-        "server": "1.1.1.1",
-        "server_port": 443,
-        "path": "/dns-query",
-        "tls": {
-          "enabled": true,
-          "server_name": "cloudflare-dns.com"
-        },
-        "detour": "snell-out"
+        "tag": "local",
+        "address": "223.5.5.5",
+        "detour": "direct"
       },
       {
-        "type": "https",
-        "tag": "dns-cn",
-        "server": "223.5.5.5",
-        "server_port": 443,
-        "path": "/dns-query",
-        "tls": {
-          "enabled": true,
-          "server_name": "dns.alidns.com"
-        }
-      },
-      {
-        "type": "local",
-        "tag": "dns-local"
-      },
-      {
-        "type": "fakeip",
-        "tag": "dns-fake",
-        "inet4_range": "198.18.0.0/15",
-        "inet6_range": "fc00::/18"
+        "tag": "remote",
+        "address": "https://1.1.1.1/dns-query",
+        "detour": "SS-2022"
       }
     ],
     "rules": [
       {
-        "domain_suffix": [
-          ".lan",
-          ".local"
-        ],
-        "server": "dns-local"
-      },
-      {
-        "rule_set": "geosite-cn",
-        "server": "dns-cn"
-      },
-      {
-        "query_type": [
-          "A",
-          "AAAA"
-        ],
-        "server": "dns-fake"
+        "server": "local",
+        "rule_set": ["geosite-cn"]
       }
     ],
-    "final": "dns-remote",
-    "strategy": "prefer_ipv4",
-    "reverse_mapping": true
+    "final": "remote",
+    "strategy": "ipv4_only",
+    "independent_cache": true
   },
   "inbounds": [
     {
       "type": "tun",
       "tag": "tun-in",
       "interface_name": "sing-box",
-      "address": [
-        "172.19.0.1/30",
-        "fdfe:dcba:9876::1/126"
-      ],
+      "address": ["172.19.0.1/30"],
       "mtu": 1500,
       "auto_route": true,
       "strict_route": true,
-      "stack": "mixed",
-      "endpoint_independent_nat": true
+      "stack": "system"
     },
     {
       "type": "mixed",
       "tag": "mixed-in",
       "listen": "127.0.0.1",
-      "listen_port": 7890,
-      "tcp_fast_open": true
+      "listen_port": 1080
     }
   ],
   "outbounds": [
     {
-      "type": "snell",
-      "tag": "snell-out",
-      "server": "YOUR_SERVER",
-      "server_port": 8443,
-      "version": 6,
-      "psk": "YOUR_PSK",
-      "mode": "default"
+      "type": "shadowsocks",
+      "tag": "SS-2022",
+      "server": "dbd93d58-hkt3.uzuma.ru",
+      "server_port": 21016,
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "81D7fg1048lIoXdXhM3eOBQ=="
     },
     {
       "type": "direct",
       "tag": "direct"
-    },
-    {
-      "type": "block",
-      "tag": "block"
     }
   ],
   "route": {
-    "rule_set": [
+    "rules": [
       {
-        "tag": "geoip-cn",
-        "type": "remote",
-        "format": "source",
-        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
-        "http_client": {
-          "domain_strategy": "prefer_ipv4"
-        },
-        "update_interval": "24h"
+        "rule_set": ["geosite-cn"],
+        "outbound": "direct"
       },
+      {
+        "rule_set": ["geoip-cn"],
+        "outbound": "direct"
+      }
+    ],
+    "rule_set": [
       {
         "tag": "geosite-cn",
         "type": "remote",
-        "format": "source",
+        "format": "binary",
         "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
-        "http_client": {
-          "domain_strategy": "prefer_ipv4"
-        },
-        "update_interval": "24h"
+        "download_detour": "direct"
+      },
+      {
+        "tag": "geoip-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+        "download_detour": "direct"
       }
     ],
-    "rules": [
-      {
-        "action": "sniff"
-      },
-      {
-        "protocol": "dns",
-        "action": "hijack-dns"
-      },
-      {
-        "ip_is_private": true,
-        "outbound": "direct"
-      },
-      {
-        "rule_set": "geosite-cn",
-        "outbound": "direct"
-      },
-      {
-        "rule_set": "geoip-cn",
-        "outbound": "direct"
-      }
-    ],
-    "final": "snell-out",
     "auto_detect_interface": true,
-    "default_domain_resolver": "dns-local"
-  },
-  "experimental": {
-    "cache_file": {
-      "enabled": true,
-      "cache_id": "default"
-    }
+    "final": "SS-2022"
   }
 }
