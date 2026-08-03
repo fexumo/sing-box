@@ -1,54 +1,57 @@
 {
   "log": {
-    "level": "info",
-    "timestamp": true
+    "level": "warn"
   },
   "dns": {
     "servers": [
       {
-        "type": "udp",
-        "tag": "local",
-        "server": "223.5.5.5",
-        "detour": "direct"
+        "tag": "dns-remote",
+        "type": "https",
+        "server": "8.8.4.4",
+        "tls": {
+          "enabled": true
+        },
+        "detour": "proxy"
       },
       {
-        "type": "https",
-        "tag": "remote",
-        "server": "1.1.1.1",
-        "detour": "SS-2022"
+        "tag": "dns-local",
+        "type": "h3",
+        "server": "223.5.5.5",
+        "tls": {
+          "enabled": true
+        }
       }
     ],
     "rules": [
       {
-        "server": "local",
-        "rule_set": ["geosite-cn"]
+        "rule_set": ["cn-location", "cn-site"],
+        "server": "dns-local"
       }
     ],
-    "final": "remote",
-    "strategy": "ipv4_only"
+    "optimistic": {
+      "enabled": true
+    }
   },
+  "http_clients": [
+    {
+      "tag": "go"
+    }
+  ],
   "inbounds": [
     {
       "type": "tun",
       "tag": "tun-in",
-      "interface_name": "sing-box",
-      "address": ["172.19.0.1/30"],
-      "mtu": 1500,
+      "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
       "auto_route": true,
       "strict_route": true,
+      "route_exclude_address_set": ["cn-ip"],
       "stack": "system"
-    },
-    {
-      "type": "mixed",
-      "tag": "mixed-in",
-      "listen": "127.0.0.1",
-      "listen_port": 1080
     }
   ],
   "outbounds": [
     {
       "type": "shadowsocks",
-      "tag": "SS-2022",
+      "tag": "proxy",
       "server": "dbd93d58-hkt3.uzuma.ru",
       "server_port": 21016,
       "method": "2022-blake3-aes-128-gcm",
@@ -62,34 +65,45 @@
   "route": {
     "rules": [
       {
-        "rule_set": ["geosite-cn"],
+        "network": ["icmp"],
         "outbound": "direct"
       },
       {
-        "rule_set": ["geoip-cn"],
+        "ip_is_private": true,
         "outbound": "direct"
       }
     ],
     "rule_set": [
       {
-        "tag": "geosite-cn",
         "type": "remote",
+        "tag": "cn-site",
         "format": "binary",
-        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
-        "download_detour": "direct"
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.srs",
+        "update_interval": "5d"
       },
       {
-        "tag": "geoip-cn",
         "type": "remote",
+        "tag": "cn-ip",
         "format": "binary",
-        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
-        "download_detour": "direct"
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs",
+        "update_interval": "7d"
+      },
+      {
+        "type": "remote",
+        "tag": "cn-location",
+        "format": "binary",
+        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/geolocation-cn.srs",
+        "update_interval": "7d"
       }
     ],
-    "auto_detect_interface": true,
     "default_domain_resolver": {
-      "server": "remote"
+      "server": "dns-remote"
     },
-    "final": "SS-2022"
+    "auto_detect_interface": true
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true
+    }
   }
 }
