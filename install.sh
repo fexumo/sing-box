@@ -50,6 +50,7 @@ ok()   { printf '%s\n' "✓ $*"; }
 need_root() { [ "$(id -u)" -eq 0 ] || die '请以 root 身份执行。'; }
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "缺少命令：$1；请先执行：$APP i"; }
 
+# 在目标目录创建临时文件并 rename，保证单文件替换原子性。
 atomic_install() {
     local source="$1" target="$2" mode="$3" owner="$4" group="$5" temp
     install -d -m 0755 "$(dirname "$target")"
@@ -112,14 +113,18 @@ recover_interrupted_restore() {
     ok '中断的恢复事务已回滚。'
 }
 
+purge_all() {
+    rm -rf "$ROOT" "$DATA_DIR" "$LOG_DIR"
+    remove_service_identity
+    rm -rf "$IDENTITY_DIR"
+}
+
 rollback_install() {
     [ "${INSTALL_GUARD:-0}" = 1 ] || return 0
     [ "${INSTALL_FRESH:-0}" = 1 ] || return 0
     svc_stop; svc_disable
     rm -f "$BIN" "$(service_file)" /etc/logrotate.d/sing-box "$SELF_TARGET"
-    rm -rf "$ROOT" "$DATA_DIR" "$LOG_DIR"
-    remove_service_identity
-    rm -rf "$IDENTITY_DIR"
+    purge_all
 }
 
 cleanup() {
@@ -434,8 +439,9 @@ fetch_binary() {
     tmp=$TXN_DIR/download
     rm -rf "$tmp"; mkdir -p "$tmp"
     archive=$tmp/asset.tar.gz
+    # 进度信息写 stderr：本函数 stdout 用于返回版本号（调用方以 $(...) 捕获）。
     info "下载 sing-box $tag（$arch/$libc）" >&2
-    curl -fL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 600 -o "$archive" "$url" || die '下载失败。'
+    curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 600 -o "$archive" "$url" || die '下载失败。'
     got=$(sha256sum "$archive" | awk '{print $1}')
     [ "$got" = "$expected" ] || die 'SHA-256 校验失败，文件已拒绝使用。'
     tar -xzf "$archive" -C "$tmp"
@@ -500,7 +506,7 @@ cmd_install() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
             -v|--version) shift; [ "$#" -gt 0 ] || die '-v/--version 需要值。'; version=$1 ;;
-            --help|-h) usage_install; return ;;
+            --help|-h) echo "用法：$APP i [-v vX.Y.Z]"; return ;;
             *) die "未知选项：$1" ;;
         esac
         shift
@@ -540,7 +546,7 @@ cmd_update() {
         case "$1" in
             -v|--version) shift; [ "$#" -gt 0 ] || die '-v/--version 需要值。'; version=$1 ;;
             --check) check_only=1 ;;
-            --help|-h) usage_update; return ;;
+            --help|-h) echo "用法：$APP up [--check] [-v vX.Y.Z]"; return ;;
             *) die "未知选项：$1" ;;
         esac
         shift
@@ -560,7 +566,7 @@ cmd_update() {
 }
 
 cmd_self_update() {
-    local check_only=0 force=0 meta sha short url candidate expected actual target_tmp
+    local check_only=0 force=0 meta sha short url candidate actual target_tmp
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --check) check_only=1 ;;
@@ -582,7 +588,10 @@ cmd_self_update() {
     curl -fLsS --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 60 -o "$candidate" "$url" || die '脚本下载失败。'
     head -n 2 "$candidate" | grep -q '^# sb — sing-box ' || die '下载文件不是受支持的管理脚本。'
     sh -n "$candidate" || die '新脚本语法检查失败。'
-    if command -v shellcheck >/dev/null 2>&1; then shellcheck -s dash "$candidate" || die '新脚本 ShellCheck 失败。'; fi
+    actual=$(sha256sum "$candidate" | awk '{print $1}')
+    if command -v shellcheck >/dev/null 2>&1 && ! shellcheck -s dash "$candidate"; then
+        warn '新脚本 ShellCheck 告警；语法检查已通过，继续更新。'
+    fi
     if [ -f "$SELF_TARGET" ] && cmp -s "$candidate" "$SELF_TARGET"; then ok "脚本已是最新提交：$short"; return 0; fi
     if [ "$check_only" = 1 ]; then
         printf '发现脚本更新：%s\nSHA-256：%s\n' "$short" "$actual"
@@ -604,24 +613,22 @@ cmd_version() {
 }
 
 # ---- 配置事务 -------------------------------------------------------------
-atomic_copy() {
-    # 在目标目录创建临时文件并 rename，保证单文件替换原子性。
-    local source=$1 target=$2 mode=$3 group=$4 temp
-    temp="${target}.new.$$"
-    cp "$source" "$temp"
-    chown root:"$group" "$temp"; chmod "$mode" "$temp"
-    mv -f "$temp" "$target"
+# 返回候选配置校验目录：现有配置快照 + 待校验文件
+stage_dir() {
+    local stage="$TXN_DIR/check-config"
+    mkdir -p "$stage"; cp -a "$CONFIG_DIR/." "$stage/"
+    printf '%s\n' "$stage"
 }
 
 stage_config() {
     # $1 protocol; $2 candidate json；返回临时配置目录
     local protocol=$1 candidate=$2 stage
-    stage="$TXN_DIR/check-config"
-    mkdir -p "$stage"
-    cp -a "$CONFIG_DIR/." "$stage/"
+    stage=$(stage_dir)
     cp "$candidate" "$stage/$(basename "$(config_file "$protocol")")"
     printf '%s\n' "$stage"
 }
+
+backup_file() { if [ -f "$1" ]; then cp -p "$1" "$2"; else : > "$2.absent"; fi; }
 
 commit_protocol() {
     # 校验候选目录，再替换配置与私有状态；服务启动失败时一起回滚。
@@ -630,25 +637,25 @@ commit_protocol() {
     state_target=$(state_file "$protocol")
     backup="$TXN_DIR/${protocol}.old.json"
     state_backup="$TXN_DIR/${protocol}.old-state.json"
-    if [ -f "$target" ]; then cp -p "$target" "$backup"; else : > "$backup.absent"; fi
-    if [ -f "$state_target" ]; then cp -p "$state_target" "$state_backup"; else : > "$state_backup.absent"; fi
+    backup_file "$target" "$backup"
+    backup_file "$state_target" "$state_backup"
     stage=$(stage_config "$protocol" "$candidate")
     info '校验候选配置'
     if ! validate_config_dir "$stage"; then
         cleanup_protocol_tls "$protocol"
         die '候选配置未通过 sing-box 校验；未修改现有服务。'
     fi
-    atomic_copy "$candidate" "$target" 0640 "$SERVICE_GROUP"
+    atomic_install "$candidate" "$target" 0640 root "$SERVICE_GROUP"
     if [ -n "$state_candidate" ]; then
-        atomic_copy "$state_candidate" "$state_target" 0600 root
+        atomic_install "$state_candidate" "$state_target" 0600 root root
     else
         rm -f "$state_target"
     fi
     svc_enable
     if ! svc_restart; then
         warn '服务启动失败，正在恢复旧配置。'
-        if [ -f "$backup" ]; then atomic_copy "$backup" "$target" 0640 "$SERVICE_GROUP"; else rm -f "$target"; fi
-        if [ -f "$state_backup" ]; then atomic_copy "$state_backup" "$state_target" 0600 root; else rm -f "$state_target"; fi
+        if [ -f "$backup" ]; then atomic_install "$backup" "$target" 0640 root "$SERVICE_GROUP"; else rm -f "$target"; fi
+        if [ -f "$state_backup" ]; then atomic_install "$state_backup" "$state_target" 0600 root root; else rm -f "$state_target"; fi
         cleanup_protocol_tls "$protocol"
         svc_restart >/dev/null 2>&1 || true
         die '新配置未生效，旧配置已尝试恢复。'
@@ -663,17 +670,16 @@ remove_protocol_transaction() {
     [ -f "$target" ] || die "$(protocol_name "$protocol") 未配置。"
     backup="$TXN_DIR/${protocol}.removed.json"
     cp -p "$target" "$backup"
-    stage="$TXN_DIR/check-config"
-    mkdir -p "$stage"; cp -a "$CONFIG_DIR/." "$stage/"; rm -f "$stage/$(basename "$target")"
+    stage=$(stage_dir)
+    rm -f "$stage/$(basename "$target")"
     validate_config_dir "$stage" || die '删除后配置校验失败，已取消。'
     for p in $PROTOCOLS; do
-        [ "$p" = "$protocol" ] && continue
-        if protocol_exists "$p"; then remaining=1; break; fi
+        [ "$p" != "$protocol" ] && protocol_exists "$p" && { remaining=1; break; }
     done
     rm -f "$target"
     if [ "$remaining" = 1 ]; then
         if ! svc_restart; then
-            atomic_copy "$backup" "$target" 0640 "$SERVICE_GROUP"
+            atomic_install "$backup" "$target" 0640 root "$SERVICE_GROUP"
             svc_restart >/dev/null 2>&1 || true
             die '服务重启失败，已恢复协议配置。'
         fi
@@ -809,7 +815,7 @@ add_options() {
             -i|--short-id) shift; [ "$#" -gt 0 ] || die '-i/--short-id 需要值。'; OPT_SHORT_ID=$1 ;;
             -m|--snell-mode) shift; [ "$#" -gt 0 ] || die '-m/--snell-mode 需要值。'; OPT_MODE=$1 ;;
             -f|--force) FORCE=1 ;;
-            --help|-h) usage_add; exit 0 ;;
+            --help|-h) echo "用法：$APP a <ss|tj|vl|at|hy|sn> [-p 端口] [-f]"; exit 0 ;;
             *) die "未知选项：$1" ;;
         esac
         shift
@@ -834,7 +840,7 @@ build_protocol_config() {
             [ -n "$OPT_SNI" ] || OPT_SNI=$DEFAULT_CERT_CN
             prepare_tls
             config_type=$PROTO
-            if [ "$PROTO" = hy2 ]; then config_type=hysteria2; fi
+            [ "$PROTO" = hy2 ] && config_type=hysteria2
             jq -n --arg type "$config_type" --arg tag "${PROTO}-in" --argjson port "$OPT_PORT" --arg pass "$pass" --arg cert "$TLS_CERT" --arg key "$TLS_KEY" \
                 '{inbounds:[{type:$type,tag:$tag,listen:"::",listen_port:$port,users:[{name:"user",password:$pass}],tls:{enabled:true,certificate_path:$cert,key_path:$key}}]}' > "$out"
             jq -n --arg sni "$OPT_SNI" '{sni:$sni}' > "$TXN_DIR/state.json" ;;
@@ -872,15 +878,11 @@ cmd_add() {
     fi
     printf '\n连接信息（请安全保存）：\n'
     cmd_uri "$PROTO"
-    if [ "$PROTO" = hy2 ]; then
-        warn "请在防火墙/安全组放行 UDP/$OPT_PORT。"
-    else
-        warn "请在防火墙/安全组放行 $(protocol_transport "$PROTO")/$OPT_PORT。"
-    fi
+    warn "请在防火墙/安全组放行 $(protocol_transport "$PROTO")/$OPT_PORT。"
 }
 
 cmd_cert() {
-    local protocol="${1:-}" cert='' key='' sni='' config state candidate old_cert old_key
+    local protocol="${1:-}" cert='' key='' sni='' config state candidate
     [ -n "$protocol" ] || die "用法：$APP cert <tj|at|hy> -s 域名 -c 证书 -k 私钥"
     protocol=$(normalise_protocol "$protocol"); shift
     case "$protocol" in trojan|anytls|hy2) ;; *) die 'cert 仅支持 tj、at、hy。' ;; esac
@@ -901,17 +903,9 @@ cmd_cert() {
     PROTO=$protocol; OPT_SNI=$sni; OPT_CERT=$cert; OPT_KEY=$key
     prepare_tls
     config=$(config_file "$protocol"); state=$TXN_DIR/state.json; candidate=$TXN_DIR/candidate.json
-    old_cert=$(jq -r '.inbounds[0].tls.certificate_path' "$config")
-    old_key=$(jq -r '.inbounds[0].tls.key_path' "$config")
     jq --arg cert "$TLS_CERT" --arg key "$TLS_KEY" '.inbounds[0].tls.certificate_path=$cert | .inbounds[0].tls.key_path=$key' "$config" > "$candidate"
     jq -n --arg sni "$sni" '{sni:$sni}' > "$state"
     commit_protocol "$protocol" "$candidate" "$state"
-    if [ "$old_cert" != "$TLS_CERT" ]; then
-        case "$old_cert" in "$TLS_DIR/${protocol}-"*) rm -f "$old_cert" ;; esac
-    fi
-    if [ "$old_key" != "$TLS_KEY" ]; then
-        case "$old_key" in "$TLS_DIR/${protocol}-"*) rm -f "$old_key" ;; esac
-    fi
     ok "$(protocol_name "$protocol") 证书已原子更新；协议凭据未变。"
 }
 
@@ -1189,11 +1183,7 @@ cmd_uninstall() {
     rm -f "$BIN" "$(service_file)" /etc/logrotate.d/sing-box "$SELF_TARGET"
     rm -f "$TRANSACTION_FILE"
     if [ "$OS_FAMILY" = debian ]; then systemctl daemon-reload; fi
-    if [ "$purge" = 1 ]; then
-        rm -rf "$ROOT" "$DATA_DIR" "$LOG_DIR"
-        remove_service_identity
-        rm -rf "$IDENTITY_DIR"
-    fi
+    if [ "$purge" = 1 ]; then purge_all; fi
     ok 'sing-box 服务与内核已移除。'
     [ "$purge" = 1 ] || warn "配置、证书及节点凭据仍保留在 $ROOT；如需销毁请加 --purge。"
 }
@@ -1244,10 +1234,6 @@ $APP — sing-box 极简生产管理器
 选项：-p 端口  -P 密码  -s SNI  -c 证书  -k 私钥  -f 强制重建
 EOF
 }
-usage_install() { echo "用法：$APP i [-v vX.Y.Z]"; }
-usage_update()  { echo "用法：$APP up [--check] [-v vX.Y.Z]"; }
-usage_add()     { echo "用法：$APP a <ss|tj|vl|at|hy|sn> [-p 端口] [-f]"; }
-
 main() {
     local command=${1:-}
     case "$command" in
