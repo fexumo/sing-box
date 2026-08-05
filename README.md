@@ -168,7 +168,7 @@ sb self-up
 ./install.sh self-up -f
 ```
 
-内核更新校验 SHA-256 和候选配置；管理脚本更新固定到 Git 提交 SHA，并校验 `SHA256SUMS`、脚本标识、语法及可选 ShellCheck。
+内核更新校验 SHA-256 和候选配置；管理脚本更新固定到 Git 提交 SHA，并校验脚本标识与语法（可选 ShellCheck，告警不阻塞更新）。
 
 ### 备份与恢复
 
@@ -237,6 +237,8 @@ journalctl -u sing-box
 ```
 
 ## 完整性校验
+
+校验仓库内 `install.sh`、`config.json`、`README.md` 的完整性：
 
 ```sh
 curl -fLO https://raw.githubusercontent.com/fexumo/sing-box/main/SHA256SUMS
